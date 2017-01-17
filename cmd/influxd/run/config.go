@@ -17,6 +17,7 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/influxdata/influxdb/coordinator"
 	"github.com/influxdata/influxdb/monitor"
+	"github.com/influxdata/influxdb/monitor/diagnostics"
 	"github.com/influxdata/influxdb/services/admin"
 	"github.com/influxdata/influxdb/services/collectd"
 	"github.com/influxdata/influxdb/services/continuous_querier"
@@ -305,4 +306,56 @@ func (c *Config) applyEnvOverrides(prefix string, spec reflect.Value, structKey 
 		}
 	}
 	return nil
+}
+
+// Diagnostics returns a diagnostics representation of Config.
+func (c *Config) Diagnostics() (*diagnostics.Diagnostics, error) {
+	return diagnostics.RowFromMap(map[string]interface{}{
+		"reporting-disabled": c.ReportingDisabled,
+		"bind-address":       c.BindAddress,
+	}), nil
+}
+
+func (c *Config) diagnosticsClients() map[string]diagnostics.Client {
+	m := map[string]diagnostics.Client{
+		"config-data":        c.Data,
+		"config-meta":        c.Meta,
+		"config-coordinator": c.Coordinator,
+		"config-retention":   c.Retention,
+		"config-precreator":  c.Precreator,
+
+		"config-monitor":    c.Monitor,
+		"config-subscriber": c.Subscriber,
+		"config-httpd":      c.HTTPD,
+
+		"config-cqs": c.ContinuousQuery,
+
+		"config-top": c,
+	}
+	if g := graphite.Configs(c.GraphiteInputs); len(g) > 0 && g.Enabled() {
+		m["config-graphite"] = g
+	}
+	if cc := collectd.Configs(c.CollectdInputs); len(cc) > 0 && cc.Enabled() {
+		m["config-collectd"] = cc
+	}
+	if t := opentsdb.Configs(c.OpenTSDBInputs); len(t) > 0 && t.Enabled() {
+		m["config-opentsdb"] = t
+	}
+	if u := udp.Configs(c.UDPInputs); len(u) > 0 && u.Enabled() {
+		m["config-udp"] = u
+	}
+
+	return m
+}
+
+func (c *Config) registerDiagnostics(m *monitor.Monitor) {
+	for name, dc := range c.diagnosticsClients() {
+		m.RegisterDiagnosticsClient(name, dc)
+	}
+}
+
+func (c *Config) deregisterDiagnostics(m *monitor.Monitor) {
+	for name := range c.diagnosticsClients() {
+		m.DeregisterDiagnosticsClient(name)
+	}
 }
